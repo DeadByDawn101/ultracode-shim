@@ -1,4 +1,6 @@
-# Troubleshooting
+<p align="center">
+  <img src="../assets/brand/doc-trouble.png" alt="Troubleshooting — symptom to cause to fix, starting with the doctor" width="100%">
+</p>
 
 First, always run the doctor — it catches most problems and prints the fix:
 

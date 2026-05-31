@@ -1,4 +1,6 @@
-# Add a model
+<p align="center">
+  <img src="../assets/brand/doc-add.png" alt="Add a model — put any backend in the /model menu with templates per route type" width="100%">
+</p>
 
 Everything lives in one file: **`config.json`** (copied from
 `config.example.json` on first run). To add a backend you edit two sections:

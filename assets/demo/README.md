@@ -1,10 +1,12 @@
 # Demo media + recording guide
 
-Drop your screen recording here and the README will show it off.
+`demo.gif` here is an **illustrative placeholder** — a rendered, colored Game of
+Life glider crawling across a terminal (the demo's end state). It is *not* a
+capture of a live agent session. Replace it with your own screen recording to
+show the real workflow; the root `README.md` already points at this path.
 
-- **For GitHub:** save a looping `demo.gif` in this folder, then uncomment the
-  image line in the root `README.md` (under **## Demo**):
-  `![UltraCode-Shim demo](assets/demo/demo.gif)`
+- **For GitHub:** save a looping `demo.gif` in this folder (overwrite the
+  placeholder). The root `README.md` renders it under **## Demo**.
 - **For X/Twitter:** post the `.mp4` directly (X autoplays video; no GIF needed).
 
 ## Shot list (≈45–60s, for the X video)
