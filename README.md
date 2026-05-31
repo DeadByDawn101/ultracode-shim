@@ -1,9 +1,14 @@
-# UltraCode-Shim
+<p align="center">
+  <img src="assets/brand/hero.png" alt="UltraCode-Shim — run Claude Code's UltraCode mode on any model you already pay for" width="100%">
+</p>
 
-[![CI](https://github.com/OnlyTerp/UltraCode-Shim/actions/workflows/ci.yml/badge.svg)](https://github.com/OnlyTerp/UltraCode-Shim/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue)
-![deps: stdlib only](https://img.shields.io/badge/deps-stdlib%20only-success)
+<p align="center">
+  <a href="https://github.com/OnlyTerp/UltraCode-Shim/actions/workflows/ci.yml"><img src="https://github.com/OnlyTerp/UltraCode-Shim/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-8b5cf6.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/python-3.8%2B-6366f1" alt="Python 3.8+">
+  <img src="https://img.shields.io/badge/deps-stdlib%20only-a855f7" alt="deps: stdlib only">
+  <img src="https://img.shields.io/badge/platforms-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-c026d3" alt="platforms">
+</p>
 
 Use Claude Code's **UltraCode** mode (xhigh effort + the Workflow/deep-reasoning
 harness) with **any model you already pay for** — pick it live from the `/model`
@@ -19,11 +24,15 @@ The example config ships ready-to-use entries for **GPT‑5.5 (Codex login)**,
 plan for, delete the rest. (Cursor's Composer needs the `cursor-agent` CLI and
 isn't HTTP-based — see [docs/ADD_A_MODEL.md](docs/ADD_A_MODEL.md).)
 
-```
-  Claude Code  ──ANTHROPIC_BASE_URL──▶  proxy.py (loopback)  ──▶  the model you picked
-   /model menu  ◀── GET /v1/models ──   (adds UltraCode envelope,   (MiMo / OpenRouter /
-                                         routes by your config.json)  Codex OAuth / local / Claude)
-```
+<p align="center">
+  <img src="assets/brand/features.png" alt="One icon, every model · stdlib-only proxy · tools translated both ways · your Claude stays untouched" width="100%">
+</p>
+
+## How it works
+
+<p align="center">
+  <img src="assets/brand/architecture.png" alt="Claude Code's /model menu points at a loopback proxy that adds the UltraCode envelope and routes each pick to the backend you already pay for" width="100%">
+</p>
 
 > **How is this possible?** At the API level, "UltraCode" is just
 > `effort=xhigh` + adaptive thinking + a big `max_tokens` + one system reminder —
@@ -55,7 +64,13 @@ Python 3.8/3.12.
 
 Tested on **Windows 11** (no WSL needed). macOS/Linux/WSL work too via `bin/ultracode`.
 
-## Quick start (Windows)
+## Quick start
+
+<p align="center">
+  <img src="assets/brand/quickstart.png" alt="Three steps: get the code and run the doctor, copy config.example.json and pick your models, then launch and type /model" width="100%">
+</p>
+
+### Windows
 
 ```powershell
 git clone https://github.com/OnlyTerp/UltraCode-Shim.git
@@ -75,7 +90,9 @@ copy config.example.json config.json
 # 4. Double-click "UltraCode (All Models)" — then type /model and pick a backend.
 ```
 
-macOS / Linux / WSL: run `python3 scripts/doctor.py` then `./bin/ultracode`.
+### macOS / Linux / WSL
+
+Run `python3 scripts/doctor.py` then `./bin/ultracode`.
 (The launchers copy `config.example.json` → `config.json` for you on first run if
 you skip step 2.)
 
