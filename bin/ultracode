@@ -3,9 +3,9 @@
 # Windows users: use windows\Start-UltraCode.ps1 instead.
 #
 # Starts proxy.py, points Claude Code at it with gateway model discovery
-# enabled, seeds the discovery cache, runs `claude`, then stops the proxy on
-# exit. Your normal Claude Code install is untouched (session-scoped --settings
-# + env only).
+# enabled, seeds the discovery cache, runs `claude`, then releases this
+# session's proxy reference. Your normal Claude Code install is untouched
+# (session-scoped --settings + env only).
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -17,6 +17,8 @@ BASE_STATE="${XDG_STATE_HOME:-$HOME/.local/state}/ultracode-shim"
 SETTINGS="$BASE_STATE/ultracode_settings.json"
 PID_FILE="$BASE_STATE/proxy.pid"
 LOG_FILE="$BASE_STATE/proxy.log"
+REF_DIR="$BASE_STATE/refs"
+OWNER_REF="$REF_DIR/$$"
 
 PY="$(command -v python3 || command -v python || true)"
 [[ -n "$PY" ]] || { echo "Python 3 not found." >&2; exit 1; }
@@ -62,8 +64,32 @@ with urllib.request.urlopen(sys.argv[1].rstrip('/')+'/healthz',timeout=2) as r:
 PY
 }
 
+prune_refs() {
+  [[ -d "$REF_DIR" ]] || return 0
+  local f pid
+  for f in "$REF_DIR"/*; do
+    [[ -e "$f" ]] || continue
+    pid="${f##*/}"
+    if [[ "$pid" =~ ^[0-9]+$ ]]; then
+      kill -0 "$pid" 2>/dev/null || rm -f "$f"
+    else
+      rm -f "$f"
+    fi
+  done
+}
+
+refs_active() {
+  prune_refs
+  [[ -d "$REF_DIR" ]] && [[ -n "$(ls -A "$REF_DIR" 2>/dev/null)" ]]
+}
+
 start_proxy() {
-  if health_ok; then return 0; fi
+  mkdir -p "$REF_DIR"
+  : > "$OWNER_REF"
+  if health_ok; then
+    echo "Reusing UltraCode proxy on $BASE_URL."
+    return 0
+  fi
   echo "Starting UltraCode proxy on $BASE_URL -> $UPSTREAM ..."
   UC_CONFIG="$CONFIG" UC_LISTEN_PORT="$PORT" UC_UPSTREAM="$UPSTREAM" UC_LOG="$LOG_FILE" \
     "$PY" "$PROXY" >>"$LOG_FILE" 2>&1 &
@@ -75,6 +101,8 @@ start_proxy() {
 }
 
 stop_proxy() {
+  rm -f "$OWNER_REF"
+  if refs_active; then return 0; fi
   [[ -f "$PID_FILE" ]] && kill "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null || true
   rm -f "$PID_FILE"
 }

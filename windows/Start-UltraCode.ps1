@@ -8,7 +8,8 @@
   Starts proxy.py on a loopback port, points Claude Code at it via
   ANTHROPIC_BASE_URL, enables gateway model discovery, seeds the discovery cache
   so your models show on first open, runs the two-column model selector, then
-  runs `claude`. When Claude Code exits, the proxy is stopped.
+  runs `claude`. When Claude Code exits, this session releases its shared-proxy
+  reference; the proxy stops only after the last session exits.
 
   Your normal Claude Code install is untouched: this only sets environment for
   THIS process and uses a session-scoped --settings file.
@@ -99,37 +100,70 @@ $env:UC_LISTEN_PORT = "$Port"
 $env:UC_UPSTREAM    = $Upstream
 $env:UC_LOG         = Join-Path $StateDir "ultracode_proxy.log"
 
-# ----- kill any stale proxy on this port ------------------------------------
-Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='python3.exe'" |
-    Where-Object { $_.CommandLine -match '\bproxy\.py' } |
-    ForEach-Object {
-        Write-Host "Stopping existing UltraCode proxy PID $($_.ProcessId)"
-        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-    }
-Start-Sleep -Milliseconds 400
+# ----- shared-proxy lifecycle (reference-counted across sessions) -----------
+# Several UltraCode sessions reuse one proxy on this port. Track live users with
+# one marker file per launcher process so one session exiting cannot kill the
+# proxy while another is still using it.
+$RefDir   = Join-Path $StateDir "refs"
+$PidFile  = Join-Path $StateDir "proxy.pid"
+$OwnerRef = Join-Path $RefDir "$PID"
 
-# ----- start the proxy ------------------------------------------------------
-Write-Host "Starting UltraCode proxy on $BaseUrl -> $Upstream ..."
-$pyArgs = @()
-if ($PyCmd.Count -gt 1) { $pyArgs += $PyCmd[1..($PyCmd.Count-1)] }
-$pyArgs += $Proxy
-$proc = Start-Process -FilePath $PyCmd[0] -ArgumentList $pyArgs -PassThru -WindowStyle Hidden
+function Test-ProxyHealthy {
+    try { return (Invoke-WebRequest -Uri "$BaseUrl/healthz" -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200 }
+    catch { return $false }
+}
 
-$ready = $false
-for ($i = 0; $i -lt 40; $i++) {
-    Start-Sleep -Milliseconds 250
-    try {
-        if ((Invoke-WebRequest -Uri "$BaseUrl/healthz" -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200) {
-            $ready = $true; break
+function Remove-DeadRefs {
+    if (-not (Test-Path $RefDir)) { return }
+    Get-ChildItem $RefDir -File -ErrorAction SilentlyContinue | ForEach-Object {
+        $rpid = $_.Name
+        if ($rpid -notmatch '^\d+$' -or -not (Get-Process -Id ([int]$rpid) -ErrorAction SilentlyContinue)) {
+            Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
         }
-    } catch { }
+    }
 }
-if (-not $ready) {
-    Write-Error "Proxy did not become healthy on port $Port. Log: $($env:UC_LOG)"
-    if (Test-Path $env:UC_LOG) { Get-Content $env:UC_LOG -Tail 20 }
-    exit 1
+
+function Test-RefsActive {
+    Remove-DeadRefs
+    return ((Test-Path $RefDir) -and @(Get-ChildItem $RefDir -File -ErrorAction SilentlyContinue).Count -gt 0)
 }
-Write-Host "Proxy healthy (pid $($proc.Id))." -ForegroundColor Green
+
+function Stop-ProxyIfLast {
+    Remove-Item $OwnerRef -Force -ErrorAction SilentlyContinue
+    if (Test-RefsActive) { return }
+    if (Test-Path $PidFile) {
+        $stopId = Get-Content $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($stopId) { Stop-Process -Id ([int]$stopId) -Force -ErrorAction SilentlyContinue }
+        Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
+New-Item -ItemType Directory -Force -Path $RefDir | Out-Null
+New-Item -ItemType File -Force -Path $OwnerRef | Out-Null
+
+if (Test-ProxyHealthy) {
+    Write-Host "Reusing the UltraCode proxy already running on $BaseUrl." -ForegroundColor Green
+} else {
+    Write-Host "Starting UltraCode proxy on $BaseUrl -> $Upstream ..."
+    $pyArgs = @()
+    if ($PyCmd.Count -gt 1) { $pyArgs += $PyCmd[1..($PyCmd.Count-1)] }
+    $pyArgs += $Proxy
+    $proc = Start-Process -FilePath $PyCmd[0] -ArgumentList $pyArgs -PassThru -WindowStyle Hidden
+    Set-Content -Path $PidFile -Value $proc.Id -Encoding ascii
+
+    $ready = $false
+    for ($i = 0; $i -lt 40; $i++) {
+        Start-Sleep -Milliseconds 250
+        if (Test-ProxyHealthy) { $ready = $true; break }
+    }
+    if (-not $ready) {
+        Write-Error "Proxy did not become healthy on port $Port. Log: $($env:UC_LOG)"
+        if (Test-Path $env:UC_LOG) { Get-Content $env:UC_LOG -Tail 20 }
+        Remove-Item $OwnerRef -Force -ErrorAction SilentlyContinue
+        exit 1
+    }
+    Write-Host "Proxy healthy (pid $($proc.Id))." -ForegroundColor Green
+}
 
 # ----- seed Claude Code's gateway-models cache (first-launch visibility) -----
 $CfgDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME ".claude" }
@@ -150,11 +184,13 @@ try {
 }
 
 if ($ProxyOnly) {
+    Remove-Item $OwnerRef -Force -ErrorAction SilentlyContinue
+    $shownPid = if (Test-Path $PidFile) { Get-Content $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1 } else { "<pid>" }
     Write-Host ""
     Write-Host "Proxy running. Connect Claude Code with:"
     Write-Host "  `$env:ANTHROPIC_BASE_URL='$BaseUrl'"
     Write-Host "  claude --settings `"$Settings`""
-    Write-Host "Stop the proxy: Stop-Process -Id $($proc.Id)"
+    Write-Host "Stop the proxy: Stop-Process -Id $shownPid"
     exit 0
 }
 
@@ -200,6 +236,6 @@ try {
         & $Claude.Source --settings "$Settings" @args
     }
 } finally {
-    Write-Host "Claude exited. Stopping proxy (pid $($proc.Id))."
-    Stop-Process -Id $proc.Id -ErrorAction SilentlyContinue
+    Write-Host "Claude exited. Releasing the UltraCode proxy."
+    Stop-ProxyIfLast
 }
