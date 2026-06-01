@@ -618,6 +618,74 @@ def _stop_reason_for(finish: str) -> str:
 
 
 # --------------------------------------------------------------------------
+# Empty-turn resilience
+# --------------------------------------------------------------------------
+# Some upstreams occasionally return a turn with NO text and NO tool call -- a
+# transient hiccup, or a budget-exhausted (response.incomplete) reasoning turn at
+# high effort (notably GPT-5.5 via codex). An empty assistant turn is useless, so
+# we transparently retry a fresh turn a bounded number of times. Streaming is
+# preserved: events are buffered only until the first meaningful event, so a normal
+# turn has zero added latency and partial output is never duplicated.
+EMPTY_RETRY_ATTEMPTS = int(os.environ.get("UC_EMPTY_RETRY_ATTEMPTS", "2"))
+EMPTY_RETRY_BACKOFF = float(os.environ.get("UC_EMPTY_RETRY_BACKOFF", "0.75"))
+
+
+def _retryable_status(status) -> bool:
+    """Transient failures worth retrying; fatal (4xx auth/validation) are not."""
+    try:
+        s = int(status)
+    except (TypeError, ValueError):
+        return True  # unknown/None -> treat as transient
+    return s == 0 or s >= 500 or s in (408, 409, 425, 429)
+
+
+def _events_with_retry(make_events, attempts=EMPTY_RETRY_ATTEMPTS,
+                       backoff=EMPTY_RETRY_BACKOFF, label="upstream"):
+    """Yield events from make_events() (a zero-arg factory returning a FRESH event
+    generator). If a turn yields no meaningful output (no non-whitespace text and
+    no tool_call) and ended empty or with a retryable error, retry a fresh turn up
+    to `attempts` times. Never retries after meaningful output, a fatal
+    (non-retryable) error, or partial output already streamed."""
+    last_buffer = []
+    for attempt in range(attempts + 1):
+        buffer = []
+        meaningful = False
+        fatal = None
+        try:
+            for ev in make_events():
+                if meaningful:
+                    yield ev
+                    continue
+                et = ev.get("type")
+                if (et == "text_delta" and (ev.get("text") or "").strip()) or et == "tool_call":
+                    meaningful = True
+                    for b in buffer:
+                        yield b
+                    buffer = []
+                    yield ev
+                    continue
+                if et == "error" and not _retryable_status(ev.get("status")):
+                    fatal = ev
+                buffer.append(ev)
+        except Exception as e:
+            vlog("%s stream error (attempt %d): %s" % (label, attempt + 1, e))
+        if meaningful:
+            return
+        if fatal is not None:
+            for b in buffer:
+                yield b
+            return
+        last_buffer = buffer
+        if attempt < attempts:
+            log("%s: empty turn, retrying (%d/%d)" % (label, attempt + 1, attempts))
+            time.sleep(backoff * (attempt + 1))
+            continue
+        for b in last_buffer:
+            yield b
+        return
+
+
+# --------------------------------------------------------------------------
 # HTTP proxy
 # --------------------------------------------------------------------------
 
@@ -801,26 +869,29 @@ class Handler(BaseHTTPRequestHandler):
             headers[hk] = hv
 
         vlog("openai_compat -> %s model=%s stream=%s" % (url, model_id, want_stream))
-        req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-        try:
-            resp = urllib.request.urlopen(req, timeout=600)
-        except urllib.error.HTTPError as e:
-            detail = ""
-            try:
-                detail = e.read().decode("utf-8", "replace")[:800]
-            except Exception:
-                pass
-            log("openai_compat upstream HTTP %s for %s: %s" % (e.code, url, detail))
-            self._emit_or_error(want_stream, model_id, 502,
-                                "openai_compat upstream %s: %s" % (e.code, detail))
-            return
-        except Exception as e:
-            log("openai_compat upstream error %s for %s" % (e, url))
-            self._emit_or_error(want_stream, model_id, 502,
-                                "openai_compat upstream error: %s" % e)
-            return
 
-        events = _oai_response_to_events(resp)
+        def _mk_events():
+            req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+            try:
+                resp = urllib.request.urlopen(req, timeout=600)
+            except urllib.error.HTTPError as e:
+                detail = ""
+                try:
+                    detail = e.read().decode("utf-8", "replace")[:800]
+                except Exception:
+                    pass
+                log("openai_compat upstream HTTP %s for %s: %s" % (e.code, url, detail))
+                yield {"type": "error", "status": e.code,
+                       "message": "openai_compat upstream %s: %s" % (e.code, detail)}
+                return
+            except Exception as e:
+                log("openai_compat upstream error %s for %s" % (e, url))
+                yield {"type": "error", "status": 502,
+                       "message": "openai_compat upstream error: %s" % e}
+                return
+            yield from _oai_response_to_events(resp)
+
+        events = _events_with_retry(_mk_events, label="openai_compat %s" % model_id)
         if want_stream:
             self._stream_anthropic_from_events(events, model_id)
         else:
@@ -842,17 +913,15 @@ class Handler(BaseHTTPRequestHandler):
         model_id = anth.get("model") or route.get("model") or "gpt-5.5"
         want_stream = bool(anth.get("stream", False))
         oai_body = anthropic_to_openai(anth)
-        try:
-            events = _codex_oauth.stream_events(
+        events = _events_with_retry(
+            lambda: _codex_oauth.stream_events(
                 messages=oai_body.get("messages") or [],
                 tools=oai_body.get("tools"),
                 tool_choice=oai_body.get("tool_choice"),
                 model=route.get("model") or model_id,
-            )
-        except Exception as e:
-            log("codex helper error: %s" % e)
-            self._emit_or_error(want_stream, model_id, 502, "codex helper error: %s" % e)
-            return
+            ),
+            label="codex %s" % model_id,
+        )
         if want_stream:
             self._stream_anthropic_from_events(events, model_id)
         else:

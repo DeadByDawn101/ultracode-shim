@@ -21,6 +21,8 @@ SEEN_ANTH = None
 
 
 class Mock(BaseHTTPRequestHandler):
+    RETRY_HITS = 0  # counts hits for the "retry-model" empty-then-recover case
+
     def log_message(self, *a):
         pass
 
@@ -54,6 +56,21 @@ class Mock(BaseHTTPRequestHandler):
             def sse(o):
                 self.wfile.write(("data: " + json.dumps(o) + "\n\n").encode())
                 self.wfile.flush()
+
+            if body.get("model") == "retry-model":
+                # First attempt returns an empty turn (no text/tool) -> the proxy
+                # must retry; the second attempt recovers with real content.
+                Mock.RETRY_HITS += 1
+                if Mock.RETRY_HITS == 1:
+                    sse({"choices": [{"delta": {}, "finish_reason": "stop"}],
+                         "usage": {"prompt_tokens": 5, "completion_tokens": 0}})
+                else:
+                    sse({"choices": [{"delta": {"content": "recovered"}}]})
+                    sse({"choices": [{"delta": {}, "finish_reason": "stop"}],
+                         "usage": {"prompt_tokens": 5, "completion_tokens": 2}})
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+                return
             sse({"choices": [{"delta": {"content": "Hello "}}]})
             sse({"choices": [{"delta": {"content": "world"}}]})
             sse({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1",
@@ -96,19 +113,22 @@ def main():
 
     config = {
         "proxy": {"listen_port": PROXY_PORT, "anthropic_upstream": mock, "max_tokens_floor": 64000},
-        "models": [{"id": "claude-mock", "display_name": "Mock Model"}],
+        "models": [{"id": "claude-mock", "display_name": "Mock Model"},
+                   {"id": "claude-retry", "display_name": "Retry Model"}],
         "routes": {
             "claude-opus-4-8": {"model": "claude-opus-4-8", "upstream": mock, "auth": "passthrough"},
             "claude-mock": {"type": "openai_compat", "model": "mock-model",
                             "upstream": mock + "/v1", "auth": "Bearer ${MOCK_KEY}",
                             "max_output_tokens": 1234,
                             "headers": {"X-Test-UA": "openclaw/test"}},
+            "claude-retry": {"type": "openai_compat", "model": "retry-model",
+                             "upstream": mock + "/v1", "auth": "Bearer ${MOCK_KEY}"},
         },
     }
     cfg_f = os.path.join(GW, "_test_config.json")
     open(cfg_f, "w").write(json.dumps(config))
 
-    env = dict(os.environ, UC_CONFIG=cfg_f, MOCK_KEY="secret123")
+    env = dict(os.environ, UC_CONFIG=cfg_f, MOCK_KEY="secret123", UC_EMPTY_RETRY_BACKOFF="0")
     p = subprocess.Popen([sys.executable, os.path.join(GW, "proxy.py")],
                          env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:
@@ -154,6 +174,12 @@ def main():
         assert '"stop_reason": "tool_use"' in out
         assert "Hello " in out and "world" in out
         print("[ok] openai_compat streaming tool-call -> Anthropic tool_use")
+
+        out = _post("/v1/messages", {"model": "claude-retry", "max_tokens": 50,
+            "messages": [{"role": "user", "content": "hi"}]})
+        assert Mock.RETRY_HITS == 2, "expected 1 empty turn + 1 retry, got %d hits" % Mock.RETRY_HITS
+        assert "recovered" in out, out
+        print("[ok] empty turn auto-retried -> recovered (upstream hit %dx)" % Mock.RETRY_HITS)
 
         sys.path.insert(0, GW)
         import proxy as up

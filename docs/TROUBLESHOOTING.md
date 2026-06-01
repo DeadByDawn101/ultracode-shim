@@ -36,6 +36,11 @@ The proxy log is at:
   `upstream` is wrong.
 - **Codex 401 / "run codex login":** your ChatGPT/Codex token expired — run
   `codex login` again.
+- **Occasional empty reply:** some upstreams (notably GPT‑5.5 via codex at high
+  effort, or a flaky OpenAI‑compatible backend) now and then return a turn with no
+  text and no tool call. The proxy auto-retries a fresh turn (default 2 retries)
+  before giving up, so this is usually invisible. Tune with `UC_EMPTY_RETRY_ATTEMPTS`
+  and `UC_EMPTY_RETRY_BACKOFF`.
 
 ### It replies in text but never calls tools
 

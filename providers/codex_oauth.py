@@ -317,7 +317,10 @@ def stream_events(messages, tools=None, tool_choice=None, model="gpt-5.5",
                         yield {"type": "tool_call", "id": canon or None,
                                "name": name, "arguments": args}
                         pending.pop(canon, None)
-                elif et in ("response.completed", "response.done"):
+                elif et in ("response.completed", "response.done", "response.incomplete"):
+                    # response.incomplete = the turn was cut off (e.g. reasoning hit
+                    # the output budget at high effort). It often carries no text/tool
+                    # call -> the proxy's empty-turn retry handles it.
                     usage = ((obj.get("response") or {}).get("usage")) or {}
                     in_tok = usage.get("input_tokens", in_tok) or in_tok
                     out_tok = usage.get("output_tokens", out_tok) or out_tok
