@@ -41,6 +41,14 @@ The proxy log is at:
   text and no tool call. The proxy auto-retries a fresh turn (default 2 retries)
   before giving up, so this is usually invisible. Tune with `UC_EMPTY_RETRY_ATTEMPTS`
   and `UC_EMPTY_RETRY_BACKOFF`.
+- **A turn hangs / "thinks" for many minutes (worst in multi-agent / dynamic
+  workflows):** the codex upstream sometimes opens the stream and then goes silent
+  mid-turn. The codex reader uses a bounded per-read idle timeout
+  (`UC_CODEX_STREAM_IDLE_TIMEOUT`, default `150` seconds): a stall becomes a
+  retryable error and the empty-turn retry re-attempts, instead of blocking on the
+  old 10-minute socket timeout (which would freeze an entire workflow on a single
+  hung sub-agent). Lower it for faster recovery; raise it if your effort level
+  legitimately produces long silent reasoning gaps before the first token.
 
 ### It replies in text but never calls tools
 
@@ -77,6 +85,37 @@ powershell -ExecutionPolicy Bypass -File .\windows\Start-UltraCode.ps1
 
 Install it (`npm i -g @anthropic-ai/claude-code`) and make sure `claude` is on
 PATH (`claude --version`).
+
+### Running on Windows but your project lives in WSL (split-brain setup)
+
+If Claude Code runs as a Windows process (`claude.exe`) while your code, Python,
+Node, and other tools live in WSL, the Bash tool is **Git Bash, not WSL** — so
+`/home/...` paths fail with `Permission denied` and Linux tools look "not found".
+The agent then flails (PowerShell workarounds, etc.). Two rules make tool calls
+reliable:
+
+- **Run Linux commands inside WSL**, keeping the whole command in the quoted
+  `-lc '...'` string (this gives the full login PATH, makes `/home` work, and the
+  output is captured back to Claude Code):
+
+  ```
+  wsl.exe -d <Distro> -e bash -lc 'cd /home/<you>/<project> && <command>'
+  ```
+
+  Don't pass a bare `/home/...` path as a *separate* argument to `wsl.exe` — Git
+  Bash will mangle it. Keeping it inside the quoted `-lc` avoids that.
+
+- **Create/edit files with Claude's Read/Write/Edit tools** using the
+  `\\wsl.localhost\<Distro>\home\<you>\...` path. Those tools use the Windows
+  filesystem API, so the UNC path works even though the Bash tool's `/home` does
+  not.
+
+Also note: WSL↔Windows `localhost` is only shared when WSL **mirrored networking**
+is enabled; in the default NAT mode a service on one side is *not* reachable at
+`127.0.0.1` from the other (so the proxy/shim and Claude Code must run on the same
+side — here, all on Windows). The cleanest way to make any model follow the rules
+above automatically is to drop them into a `CLAUDE.md` (project root, or the global
+`~/.claude/CLAUDE.md`).
 
 ### Did I break my normal Claude Code?
 

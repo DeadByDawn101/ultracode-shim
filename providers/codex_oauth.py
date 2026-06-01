@@ -29,6 +29,9 @@ ENV KNOBS
   UC_CODEX_EFFORT        reasoning effort         (default medium; none/low/medium/high/xhigh)
   UC_CODEX_SERVICE_TIER  optional service tier    (e.g. priority)
   UC_CODEX_REFRESH_CMD   best-effort refresh cmd  (default "codex login status")
+  UC_CODEX_STREAM_IDLE_TIMEOUT  per-read idle timeout in seconds (default 150) --
+                         bounds a stalled stream so the proxy's empty-turn retry
+                         can re-attempt instead of hanging ~10 min on one turn
 """
 
 import base64
@@ -47,6 +50,15 @@ RESPONSES_URL = BASE_URL + "/responses"
 DEFAULT_EFFORT = os.environ.get("UC_CODEX_EFFORT", "medium")
 SERVICE_TIER = os.environ.get("UC_CODEX_SERVICE_TIER", "").strip()
 REFRESH_CMD = os.environ.get("UC_CODEX_REFRESH_CMD", "codex login status")
+# Per-read (idle) timeout for the streaming Codex response, in seconds. urllib's
+# socket timeout applies to EACH resp.read(), so this bounds how long a STALLED
+# upstream (Codex opens the SSE, then goes silent mid-turn -- an intermittent
+# ChatGPT-side hiccup) can block before we raise and let the proxy's empty-turn
+# retry re-attempt a fresh turn. The old hard-coded 600s meant a single hung
+# sub-agent could freeze an entire multi-agent / dynamic-workflow run for ~10 min.
+# Codex /responses emits frequent events (created/in_progress/reasoning deltas),
+# so a healthy high-effort turn effectively never goes silent this long.
+STREAM_IDLE_TIMEOUT = float(os.environ.get("UC_CODEX_STREAM_IDLE_TIMEOUT", "150"))
 
 
 class CodexAuthError(Exception):
@@ -240,7 +252,7 @@ def stream_events(messages, tools=None, tool_choice=None, model="gpt-5.5",
     req = urllib.request.Request(RESPONSES_URL, data=payload, headers=headers, method="POST")
 
     try:
-        resp = urllib.request.urlopen(req, timeout=600)
+        resp = urllib.request.urlopen(req, timeout=STREAM_IDLE_TIMEOUT)
     except urllib.error.HTTPError as e:
         detail = ""
         try:
