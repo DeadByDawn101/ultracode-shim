@@ -44,8 +44,8 @@ the very first open.
 
 The proxy's `GET /v1/models` returns the union of three sources, deduped by id:
 
-1. **Stock Claude models** — a built-in list (Opus 4.8/4.7, Sonnet 4.6, Haiku
-   4.5) that's *always* served, so real Claude never drops out of the picker.
+1. **Stock Claude models** — real Claude (Opus/Sonnet/Haiku), *always* served so
+   it never drops out of the picker. This list is **self-updating**: see below.
 2. **Anthropic's own `/v1/models`** — fetched live and merged in when a credential
    is available to forward; if that fetch can't run (no key, offline, a hiccup)
    the stock list above stands in for it.
@@ -60,6 +60,20 @@ exact list with `UC_STOCK_MODELS`. The stock ids are advertised only — they ar
 **not** orchestrator/worker picks, so the workflow's hardcoded `claude-opus-4-8`
 background traffic is still remapped onto your pick (see §5) instead of hijacking
 the selection.
+
+**Self-updating stock list (so a future Opus just appears).** The built-in stock
+list is only a *baseline*. Whenever the proxy makes a **successful** upstream
+`/v1/models` fetch, it learns the real Claude ids Anthropic returns (with their
+display names), keeps the Claude-only ones, and caches them to disk
+(`%LOCALAPPDATA%\UltraCode-Shim\stock-models.json` on Windows, or
+`$XDG_STATE_HOME/ultracode-shim/stock-models.json`). On later runs — including
+when upstream is unreachable — that learned list is used (with the baseline
+filling in anything not learned yet). Net effect: when Anthropic ships the next
+Opus, it shows up in `/model` automatically, **no update to this tool required**.
+Learned ids win over the baseline; an explicit `UC_STOCK_MODELS` still wins over
+both. Disable learning with `proxy.learn_stock_models: false` /
+`UC_STOCK_LEARN=0`, point the cache elsewhere with `UC_STOCK_CACHE`, and watch it
+on `/healthz` (`stock_learning`).
 
 > **Hard rule from Claude Code:** discovered ids are filtered with
 > `/^(claude|anthropic)/i`. Any model id that does **not** start with `claude`

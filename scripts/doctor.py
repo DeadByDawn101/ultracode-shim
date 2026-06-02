@@ -141,9 +141,18 @@ def main():
     # 5.5 stock Claude models (real Claude stays in /model even with no upstream key)
     include_stock = os.environ.get("UC_INCLUDE_STOCK_MODELS",
                                    "0" if proxy_cfg_get(cfg, "include_stock_models") is False else "1") != "0"
+    learn_stock = os.environ.get("UC_STOCK_LEARN",
+                                 "0" if proxy_cfg_get(cfg, "learn_stock_models") is False else "1") != "0"
     if include_stock:
         ok("stock Claude models (Opus/Sonnet/Haiku) will also appear in /model "
            "(real Claude never drops out; disable with UC_INCLUDE_STOCK_MODELS=0)")
+        if learn_stock:
+            ok("stock-model auto-learning is ON - the proxy learns new Claude ids "
+               "from upstream /v1/models, so a future Opus shows up automatically "
+               "(disable with UC_STOCK_LEARN=0)")
+        else:
+            note("stock-model auto-learning is OFF (UC_STOCK_LEARN=0 / "
+                 "proxy.learn_stock_models=false) - using only the built-in baseline list")
     else:
         note("stock Claude models are disabled (UC_INCLUDE_STOCK_MODELS=0 / "
              "proxy.include_stock_models=false) - only your configured models will show")

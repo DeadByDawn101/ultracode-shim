@@ -56,8 +56,11 @@ per-backend templates are in [ADD_A_MODEL.md](ADD_A_MODEL.md).
 
 > **Real Claude (Opus/Sonnet/Haiku) is always offered in `/model`** — you don't
 > configure it, and it stays in the picker even with no Anthropic key to list it.
-> Turn it off with `proxy.include_stock_models: false` (or
-> `UC_INCLUDE_STOCK_MODELS=0`).
+> The list is **self-updating**: the proxy learns the real Claude ids from any
+> successful upstream `/v1/models` fetch and caches them, so a newly released Opus
+> appears automatically. Turn it off with `proxy.include_stock_models: false` (or
+> `UC_INCLUDE_STOCK_MODELS=0`); disable just the learning with
+> `proxy.learn_stock_models: false` (or `UC_STOCK_LEARN=0`).
 
 ### GPT‑5.5 via ChatGPT/Codex login (optional)
 

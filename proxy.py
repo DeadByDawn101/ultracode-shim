@@ -48,7 +48,15 @@ ENV KNOBS
   UC_INCLUDE_STOCK_MODELS default 1  (1 => always advertise stock Claude models
                      -- Opus/Sonnet/Haiku -- on /v1/models so real Claude never
                      drops out of the picker; 0 to advertise only your config)
-  UC_STOCK_MODELS    optional JSON/CSV overriding the built-in stock list, e.g.
+  UC_STOCK_LEARN     default 1       (1 => learn the real Claude model ids from
+                     any successful upstream /v1/models fetch and cache them to
+                     disk, so a newly released Opus shows up with no code change;
+                     0 to use only the built-in baseline)
+  UC_STOCK_CACHE     optional path for the learned-stock cache (default: a
+                     per-user state dir -- %LOCALAPPDATA%\\UltraCode-Shim or
+                     $XDG_STATE_HOME/ultracode-shim)
+  UC_STOCK_MODELS    optional JSON/CSV overriding the stock list entirely (wins
+                     over both learned + built-in), e.g.
                      '["claude-opus-4-8","claude-sonnet-4-6"]' or a JSON array of
                      {"id","display_name"} objects
   UC_CONFIG          path to config.json (default: config.json beside proxy.py,
@@ -114,6 +122,7 @@ FORCE_EFFORT = os.environ.get("UC_FORCE_EFFORT", "xhigh")
 FORCE_THINKING = os.environ.get("UC_FORCE_THINKING", "1") == "1"
 INJECT_REMINDER = os.environ.get("UC_INJECT_REMINDER", "1") == "1"
 INCLUDE_STOCK_MODELS = os.environ.get("UC_INCLUDE_STOCK_MODELS", "1") != "0"
+LEARN_STOCK_MODELS = os.environ.get("UC_STOCK_LEARN", "1") != "0"
 VERBOSE = os.environ.get("UC_VERBOSE", "0") == "1"
 _LOG_PATH = os.environ.get("UC_LOG", "")
 
@@ -248,14 +257,123 @@ def _models_from_config(models):
 # upstream, or the upstream fetch hiccups. They are NOT orchestrator/worker
 # picker entries: stock ids must keep flowing through _select_target untouched
 # so the dynamic-workflow background traffic (hardcoded to claude-opus-4-8) can
-# still be remapped onto your pick instead of hijacking the selection. Override
-# with UC_STOCK_MODELS; disable entirely with UC_INCLUDE_STOCK_MODELS=0.
+# still be remapped onto your pick instead of hijacking the selection.
+#
+# This is the built-in *baseline* (a floor, current at release time). At runtime
+# the proxy also LEARNS the real Claude ids from any successful upstream
+# /v1/models fetch and caches them to disk (see _learn_stock_from_upstream /
+# UC_STOCK_LEARN), so a newly released Opus appears automatically with no code
+# change. Precedence when building the advertised list: UC_STOCK_MODELS override
+# (if set) wins outright; otherwise learned-from-upstream entries win over the
+# baseline, and the baseline fills in anything not yet learned. Disable the whole
+# thing with UC_INCLUDE_STOCK_MODELS=0; disable just learning with UC_STOCK_LEARN=0.
 STOCK_MODELS = [
     {"id": "claude-opus-4-8",   "display_name": "Claude Opus 4.8"},
     {"id": "claude-opus-4-7",   "display_name": "Claude Opus 4.7"},
     {"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6"},
     {"id": "claude-haiku-4-5",  "display_name": "Claude Haiku 4.5"},
 ]
+
+# Which upstream ids count as "real Claude" worth learning. Anthropic's
+# /v1/models returns ids like "claude-opus-4-8" / "claude-haiku-4-5-20251001";
+# we keep the dated and dateless forms but skip anything that isn't a Claude id.
+_STOCK_LEARN_RE = re.compile(r"^(claude|anthropic)[.-]", re.I)
+
+# A trailing -YYYYMMDD / @YYYYMMDD snapshot suffix (pre-4.6 models ship dated;
+# the dateless alias points at the same model). _model_family collapses the two
+# so we never advertise both "claude-haiku-4-5" and "claude-haiku-4-5-20251001".
+_DATE_SUFFIX_RE = re.compile(r"[-@]\d{8}$")
+
+
+def _model_family(mid):
+    """Key that treats a model's dated and dateless ids as the same thing, so the
+    stock list doesn't show near-duplicate rows for one model."""
+    return _DATE_SUFFIX_RE.sub("", mid or "").lower()
+
+# Learned stock cache (populated from disk at startup + refreshed on every
+# successful upstream /v1/models fetch). Guarded by a lock for the threaded server.
+_LEARNED_STOCK = []          # [{"id","display_name"}], most-recent upstream order
+_LEARNED_STOCK_LOCK = threading.Lock()
+_LEARNED_STOCK_LOADED = False
+
+
+def _stock_cache_path():
+    """Where the learned-stock cache lives. UC_STOCK_CACHE overrides; otherwise a
+    per-user state dir that matches the launchers' conventions."""
+    p = os.environ.get("UC_STOCK_CACHE")
+    if p:
+        return p
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "UltraCode-Shim", "stock-models.json")
+    base = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    return os.path.join(base, "ultracode-shim", "stock-models.json")
+
+
+def _normalize_learned(items):
+    """Coerce a list of {"id","display_name"} into the normalized, Claude-only
+    form, deduped by id (first occurrence wins)."""
+    out, seen = [], set()
+    for m in items or []:
+        if not isinstance(m, dict):
+            continue
+        mid = m.get("id")
+        if not isinstance(mid, str) or mid in seen or not _STOCK_LEARN_RE.match(mid):
+            continue
+        seen.add(mid)
+        out.append({"id": mid, "display_name": m.get("display_name") or mid})
+    return out
+
+
+def _load_learned_stock():
+    """Load the learned-stock cache from disk into _LEARNED_STOCK (once)."""
+    global _LEARNED_STOCK, _LEARNED_STOCK_LOADED
+    if _LEARNED_STOCK_LOADED or not LEARN_STOCK_MODELS:
+        return
+    _LEARNED_STOCK_LOADED = True
+    path = _stock_cache_path()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        models = data.get("models") if isinstance(data, dict) else data
+        learned = _normalize_learned(models)
+        if learned:
+            with _LEARNED_STOCK_LOCK:
+                _LEARNED_STOCK = learned
+            vlog("loaded %d learned stock model(s) from %s" % (len(learned), path))
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        vlog("could not read learned-stock cache %s: %s" % (path, e))
+
+
+def _learn_stock_from_upstream(upstream_data):
+    """Given the 'data' list from a successful upstream /v1/models response, learn
+    the real Claude ids: update the in-memory cache and persist to disk if it
+    changed. Best-effort; never raises into the request path."""
+    global _LEARNED_STOCK
+    if not LEARN_STOCK_MODELS:
+        return
+    learned = _normalize_learned(upstream_data)
+    if not learned:
+        return
+    with _LEARNED_STOCK_LOCK:
+        changed = [m["id"] for m in learned] != [m["id"] for m in _LEARNED_STOCK]
+        _LEARNED_STOCK = learned
+    if not changed:
+        return
+    path = _stock_cache_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"fetched_at": int(time.time()), "upstream": UPSTREAM,
+                       "models": learned}, f)
+        os.replace(tmp, path)
+        vlog("learned %d stock Claude model(s) from upstream -> %s"
+             % (len(learned), path))
+    except Exception as e:
+        vlog("could not write learned-stock cache %s: %s" % (path, e))
 
 
 def _parse_stock_override(raw):
@@ -286,15 +404,46 @@ def _parse_stock_override(raw):
     return out
 
 
+def _stock_source():
+    """The stock model list to advertise, as [{"id","display_name"}], BEFORE the
+    discovery id-rule filter. Precedence:
+      1. UC_STOCK_MODELS override -> exactly that list (learning ignored).
+      2. otherwise: learned-from-upstream ids (current real Claude) first, then
+         the built-in baseline fills in anything not learned yet.
+    So a freshly released Opus shows up the moment upstream lists it, while the
+    baseline still guarantees real Claude even before anything is learned."""
+    override = _parse_stock_override(os.environ.get("UC_STOCK_MODELS"))
+    if override is not None:
+        return override
+    _load_learned_stock()
+    with _LEARNED_STOCK_LOCK:
+        learned = list(_LEARNED_STOCK)
+    # Learned (real upstream ids) first, then the baseline fills in the rest.
+    # Dedup by model *family* so a model's dated and dateless ids (e.g.
+    # claude-haiku-4-5-20251001 vs claude-haiku-4-5) collapse to one row -- the
+    # learned upstream id wins since that's what Anthropic actually serves.
+    out, seen_id, seen_family = [], set(), set()
+    for m in learned + STOCK_MODELS:
+        mid = m.get("id")
+        if not mid or mid in seen_id:
+            continue
+        fam = _model_family(mid)
+        if fam in seen_family:
+            continue
+        seen_id.add(mid)
+        seen_family.add(fam)
+        out.append(m)
+    return out
+
+
 def _stock_models():
-    """The stock Claude models to advertise, after applying UC_STOCK_MODELS and
-    the /^(claude|anthropic)/i id rule Claude Code enforces on discovery."""
+    """The stock Claude models to advertise, after applying the stock source
+    precedence (override / learned / baseline) and the /^(claude|anthropic)/i id
+    rule Claude Code enforces on discovery."""
     if not INCLUDE_STOCK_MODELS:
         return []
-    override = _parse_stock_override(os.environ.get("UC_STOCK_MODELS"))
-    base = STOCK_MODELS if override is None else override
     out = []
-    for m in base:
+    for m in _stock_source():
         mid = m.get("id")
         if not mid or not re.match(r"^(claude|anthropic)", mid, re.I):
             continue
@@ -1429,6 +1578,9 @@ class Handler(BaseHTTPRequestHandler):
                                   for m in UC_MODELS],
                 "stock_models": [{"id": m["id"], "display_name": m["display_name"]}
                                  for m in _stock_models()],
+                "stock_learning": {"enabled": LEARN_STOCK_MODELS,
+                                   "learned": len(_LEARNED_STOCK),
+                                   "cache": _stock_cache_path()},
                 "slots": {k: {"type": v.get("type", "passthrough"),
                               "model": v.get("model"),
                               "upstream": v.get("upstream", "(default)")}
@@ -1511,6 +1663,12 @@ class Handler(BaseHTTPRequestHandler):
             parsed = json.loads(resp.read().decode("utf-8"))
             if isinstance(parsed, dict) and isinstance(parsed.get("data"), list):
                 base = parsed
+                # Learn the current real-Claude ids from this successful fetch and
+                # cache them, so a newly released Opus is remembered for next time
+                # (even when upstream is later unreachable). Recompute stock after
+                # learning so any new id also lands in THIS response.
+                _learn_stock_from_upstream(base["data"])
+                stock = _stock_models()
         except Exception as e:
             # No usable upstream list (e.g. no Anthropic credential to forward,
             # or an offline blip). We still serve stock + custom below, so real
@@ -1521,10 +1679,19 @@ class Handler(BaseHTTPRequestHandler):
             data = []
             base["data"] = data
         existing = {m.get("id") for m in data if isinstance(m, dict)}
-        # Stock first (so real Claude is always present), then your config. Your
-        # config wins over a stock entry of the same id; both yield to whatever
-        # the upstream list already returned for that id.
-        for m in stock + UC_MODELS:
+        # Add stock (real Claude) first, then your configured models. Skip any id
+        # already present. For stock we also skip by model *family*, so the
+        # baseline's dateless id (claude-haiku-4-5) doesn't double up with an
+        # upstream/learned dated id (claude-haiku-4-5-20251001) for one model.
+        stock_families = {_model_family(m.get("id")) for m in data if isinstance(m, dict)}
+        for m in stock:
+            fam = _model_family(m["id"])
+            if m["id"] in existing or fam in stock_families:
+                continue
+            data.append(dict(m))
+            existing.add(m["id"])
+            stock_families.add(fam)
+        for m in UC_MODELS:
             if m["id"] not in existing:
                 data.append(dict(m))
                 existing.add(m["id"])
@@ -1925,7 +2092,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     global UC_SLOT_MAP, UC_MODELS, LISTEN_PORT, UPSTREAM, MAX_TOKENS_FLOOR, ROUTER
-    global INCLUDE_STOCK_MODELS
+    global INCLUDE_STOCK_MODELS, LEARN_STOCK_MODELS
     cfg_path = os.environ.get("UC_CONFIG", "") or _default_config_path()
     try:
         cfg = load_config(cfg_path)
@@ -1949,15 +2116,24 @@ def main():
     # was set explicitly (env always wins).
     if "UC_INCLUDE_STOCK_MODELS" not in os.environ and "include_stock_models" in proxy_cfg:
         INCLUDE_STOCK_MODELS = bool(proxy_cfg["include_stock_models"])
+    if "UC_STOCK_LEARN" not in os.environ and "learn_stock_models" in proxy_cfg:
+        LEARN_STOCK_MODELS = bool(proxy_cfg["learn_stock_models"])
 
     UC_SLOT_MAP = _routes_to_slots(cfg.get("routes"))
     UC_MODELS = _models_from_config(cfg.get("models"))
     _configure_router(cfg.get("router"))
     _wire_orchestrator_worker()
+    _load_learned_stock()
     stock = _stock_models()
     if stock:
-        log("  including %d stock Claude model(s) on GET /v1/models (real Claude "
-            "stays visible): %s" % (len(stock), ", ".join(m["id"] for m in stock)))
+        with _LEARNED_STOCK_LOCK:
+            n_learned = len(_LEARNED_STOCK)
+        src = ("%d learned from upstream + baseline" % n_learned) if n_learned \
+            else ("baseline; will learn from upstream"
+                  if LEARN_STOCK_MODELS else "baseline (learning off)")
+        log("  including %d stock Claude model(s) on GET /v1/models [%s] (real "
+            "Claude stays visible): %s"
+            % (len(stock), src, ", ".join(m["id"] for m in stock)))
     if UC_MODELS:
         log("  advertising %d configured model(s) on GET /v1/models:" % len(UC_MODELS))
         for m in UC_MODELS:

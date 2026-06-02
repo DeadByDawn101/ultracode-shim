@@ -245,8 +245,12 @@ It has two sections you edit:
 > it in `config.json` — the proxy adds the stock Claude models to `/model`
 > automatically and *keeps them there even when there's no Anthropic key to fetch
 > the list*, so Opus never silently disappears. Picking one routes straight to
-> real Claude with the UltraCode envelope. Don't want them? Set
-> `proxy.include_stock_models: false` (or `UC_INCLUDE_STOCK_MODELS=0`).
+> real Claude with the UltraCode envelope. The list is **self-updating**: the
+> proxy learns the real Claude ids from any successful upstream `/v1/models` fetch
+> and caches them, so when Anthropic ships the next Opus it shows up here
+> automatically — no update to this tool needed. Don't want any of this? Set
+> `proxy.include_stock_models: false` (or `UC_INCLUDE_STOCK_MODELS=0`); disable
+> just the learning with `proxy.learn_stock_models: false` (or `UC_STOCK_LEARN=0`).
 
 Example — MiMo and an OpenRouter model:
 

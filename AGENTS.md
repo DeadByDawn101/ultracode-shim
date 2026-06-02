@@ -66,10 +66,13 @@ Ask the user which of these they have (only configure those):
 - Just **Claude** → they can still use it, routed as Anthropic passthrough. No
   savings, but UltraCode works. **You don't need to configure real Claude at
   all:** the proxy always advertises the stock Claude models (Opus/Sonnet/Haiku)
-  in `/model` and keeps them there even with no Anthropic key. So the user always
-  has real Claude available; they only *add* cheaper backends. (Disable with
-  `proxy.include_stock_models: false` / `UC_INCLUDE_STOCK_MODELS=0` if they want
-  only their configured models.)
+  in `/model` and keeps them there even with no Anthropic key. The stock list is
+  self-updating — the proxy learns real Claude ids from any successful upstream
+  `/v1/models` fetch and caches them, so a newly released Opus appears on its own.
+  So the user always has real (and current) Claude available; they only *add*
+  cheaper backends. (Disable with `proxy.include_stock_models: false` /
+  `UC_INCLUDE_STOCK_MODELS=0` for only-configured models; disable just the
+  learning with `proxy.learn_stock_models: false` / `UC_STOCK_LEARN=0`.)
 
 Then edit **one file**: copy `config.example.json` → `config.json` (the installer
 and launcher also do this on first run), and edit `config.json`:

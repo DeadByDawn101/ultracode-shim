@@ -291,6 +291,70 @@ def main():
             up.INCLUDE_STOCK_MODELS = _saved_inc
         print("[ok] stock Claude models: fallback list, disable toggle, override parsing")
 
+        # Auto-learning: the proxy learns the real Claude ids from a successful
+        # upstream /v1/models fetch, caches them to disk, and falls back to that
+        # cache (+ baseline) so a future Opus survives even when upstream is later
+        # unreachable. Exercised in-process against the module functions.
+        import tempfile
+        _saved_learned = list(up._LEARNED_STOCK)
+        _saved_learn = up.LEARN_STOCK_MODELS
+        _saved_loaded = up._LEARNED_STOCK_LOADED
+        _cache_f = tempfile.mktemp(suffix="_uc_stock.json")
+        os.environ["UC_STOCK_CACHE"] = _cache_f
+        try:
+            up.LEARN_STOCK_MODELS = True
+            up._LEARNED_STOCK = []
+            up._LEARNED_STOCK_LOADED = True  # don't read a real user cache
+            # Only Claude-ish ids are learned; junk + non-claude are dropped.
+            up._learn_stock_from_upstream([
+                {"id": "claude-opus-4-9", "display_name": "Claude Opus 4.9"},
+                {"id": "claude-haiku-4-5-20251001", "display_name": "Claude Haiku 4.5"},
+                {"id": "gpt-4o", "display_name": "nope"},
+                {"id": "text-embedding-3", "display_name": "nope"},
+                "garbage",
+            ])
+            learned_ids = [m["id"] for m in up._LEARNED_STOCK]
+            assert learned_ids == ["claude-opus-4-9", "claude-haiku-4-5-20251001"], learned_ids
+            # Persisted to the cache file (claude-only).
+            with open(_cache_f) as f:
+                disk = json.load(f)
+            assert [m["id"] for m in disk["models"]] == learned_ids, disk
+            # A future Opus learned from upstream now appears in the advertised
+            # stock list, AND the built-in baseline still fills in the rest.
+            adv = [m["id"] for m in up._stock_models()]
+            assert "claude-opus-4-9" in adv and "claude-opus-4-8" in adv, adv
+            assert adv.index("claude-opus-4-9") < adv.index("claude-opus-4-8"), adv  # learned first
+            # Family dedup: the learned DATED haiku id collapses with the baseline's
+            # DATELESS one -> exactly one "haiku 4.5" row, and it's the upstream id.
+            haiku = [i for i in adv if i.startswith("claude-haiku-4-5")]
+            assert haiku == ["claude-haiku-4-5-20251001"], haiku
+            assert up._model_family("claude-haiku-4-5-20251001") == "claude-haiku-4-5"
+            # Reload from disk into a fresh process-state proves persistence.
+            up._LEARNED_STOCK = []
+            up._LEARNED_STOCK_LOADED = False
+            up._load_learned_stock()
+            assert [m["id"] for m in up._LEARNED_STOCK] == learned_ids, up._LEARNED_STOCK
+            # An explicit UC_STOCK_MODELS override still wins over learning.
+            os.environ["UC_STOCK_MODELS"] = "claude-opus-4-8"
+            assert [m["id"] for m in up._stock_models()] == ["claude-opus-4-8"]
+            os.environ.pop("UC_STOCK_MODELS", None)
+            # Learning off -> upstream ids are ignored.
+            up.LEARN_STOCK_MODELS = False
+            up._LEARNED_STOCK = []
+            up._learn_stock_from_upstream([{"id": "claude-opus-9-9"}])
+            assert up._LEARNED_STOCK == [], "UC_STOCK_LEARN=0 must not learn"
+        finally:
+            os.environ.pop("UC_STOCK_MODELS", None)
+            os.environ.pop("UC_STOCK_CACHE", None)
+            up.LEARN_STOCK_MODELS = _saved_learn
+            up._LEARNED_STOCK = _saved_learned
+            up._LEARNED_STOCK_LOADED = _saved_loaded
+            try:
+                os.remove(_cache_f)
+            except OSError:
+                pass
+        print("[ok] stock auto-learn: learn-from-upstream, cache persist/reload, override+disable")
+
         # Auto Router unit logic (in-process): cheapest-among-viable selection,
         # the image hard-zero, the below-bar best-effort pick, score parsing
         # (clamp + extraction from prose), and the user-task signal extraction.

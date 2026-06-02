@@ -35,13 +35,27 @@ to list them upstream. If they're missing:
   `proxy.include_stock_models: false` in `config.json` or
   `UC_INCLUDE_STOCK_MODELS=0` in the environment. They're on by default.
 - **A custom `UC_STOCK_MODELS` override.** If you set this env var, only the ids
-  you listed are advertised. Unset it for the built-in list, or include the ids
-  you want (e.g. `UC_STOCK_MODELS='claude-opus-4-8,claude-sonnet-4-6'`).
+  you listed are advertised (it wins over the learned + built-in lists). Unset it
+  for the automatic list, or include the ids you want (e.g.
+  `UC_STOCK_MODELS='claude-opus-4-8,claude-sonnet-4-6'`).
 - **Stale discovery cache.** Close and reopen `/model`, or restart Claude Code —
   the launcher pre-seeds the cache with stock + your models on every launch.
 - **Old version.** Earlier builds served custom-only when the upstream
   `/v1/models` fetch failed, so Opus could vanish. `git pull` (or re-run the
   installer) to get the always-on stock list.
+
+**A brand-new Claude model isn't showing up?** The stock list self-updates: the
+proxy learns real Claude ids from a **successful** upstream `/v1/models` fetch and
+caches them, so a new Opus normally appears on its own. If it hasn't:
+
+- **Learning is off or upstream hasn't been hit.** Learning needs at least one
+  successful upstream fetch (a working Claude/OAuth login). Check
+  `proxy.learn_stock_models` / `UC_STOCK_LEARN` aren't disabled; confirm on
+  `/healthz` → `stock_learning` (`enabled`, `learned`, `cache`).
+- **Need it right now without waiting.** List it explicitly via `UC_STOCK_MODELS`
+  (e.g. `UC_STOCK_MODELS='claude-opus-5-0'`) — that's served immediately.
+- **Reset the learned cache.** Delete the file shown at `/healthz` →
+  `stock_learning.cache` and relaunch.
 
 ### The pre-launch selector doesn't open / says it cannot reach `/uc/select`
 
