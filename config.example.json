@@ -21,7 +21,7 @@
     { "id": "claude-deepseek-v4-flash", "display_name": "DeepSeek V4 Flash" },
     { "id": "claude-step-flash",        "display_name": "Step Flash" },
     { "id": "claude-ollama-cloud",      "display_name": "Ollama Cloud" },
-    { "id": "claude-opencode",          "display_name": "Claude via OpenCode Go" },
+    { "id": "claude-opencode",          "display_name": "DeepSeek V4 Pro (OpenCode Go)" },
     { "id": "claude-openrouter",        "display_name": "Llama 3.3 70B (OpenRouter)" },
     { "id": "claude-local",             "display_name": "Local model" },
     { "id": "claude-composer",          "display_name": "Composer 2.5 (Cursor, experimental)" }
@@ -80,9 +80,10 @@
       "auth": "Bearer REPLACE_WITH_YOUR_OLLAMA_KEY"
     },
     "claude-opencode": {
-      "_": "OpenCode Go plan (Anthropic-native passthrough). Set model to the id your plan exposes.",
-      "upstream": "https://opencode.ai/zen/go",
-      "model": "claude-sonnet-4-5",
+      "_": "OpenCode Go SUBSCRIPTION (OpenCode Zen 'Go' plan). It is an OpenAI-compatible API: base URL ends in /zen/go/v1 and the proxy appends /chat/completions. Model ids are BARE - e.g. 'deepseek-v4-pro' (also deepseek-v4-flash, kimi-k2.6, glm-5.1, minimax-m3, ...), NOT 'opencode-go/deepseek-v4-pro' (the 'opencode-go/' prefix is the `opencode` CLI's provider namespace, not the API id). The endpoint sits behind Cloudflare, which blocks the default client User-Agent with '403 error code: 1010', so a User-Agent header is required. NOTE: https://opencode.ai/zen/v1 (no /go) is the SEPARATE pay-as-you-go endpoint, not this subscription.",
+      "type": "openai_compat",
+      "upstream": "https://opencode.ai/zen/go/v1",
+      "model": "deepseek-v4-pro",
       "auth": "Bearer REPLACE_WITH_YOUR_OPENCODE_KEY",
       "headers": { "User-Agent": "openclaw/2026.4.20" }
     },
