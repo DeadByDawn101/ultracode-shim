@@ -9,8 +9,21 @@ display on HiDPI screens.
 | `features.png` | Feature highlights row | 1280×360 |
 | `architecture.png` | "How it works" flow diagram | 1280×600 |
 | `quickstart.png` | Three-step quick start strip | 1280×330 |
+| `auto-router.png` | Auto Router "how it routes" diagram | 1280×650 |
 
 Palette: indigo `#6366f1` → violet `#8b5cf6` → purple `#a855f7` → fuchsia
 `#c026d3` on a near-black `#0a0c14` background, matching the `ultracode` app icon.
-Type is Inter (display/body) and JetBrains Mono (code). Regenerate from source by
-re-rendering the same HTML/CSS at `deviceScaleFactor: 2`.
+Type is Inter (display/body) and JetBrains Mono (code).
+
+## Regenerating
+
+`auto-router.png` ships with its HTML/CSS source (`auto-router.html`) and a
+renderer. To regenerate it (or add a new graphic the same way):
+
+```
+pip install playwright && python -m playwright install chromium
+python assets/brand/render.py auto-router      # or: render.py  (all *.html here)
+```
+
+`render.py` reads the `body{width;height}` from each `*.html` and screenshots it
+at `device_scale_factor=2`, so the output is exactly 2× the canvas.

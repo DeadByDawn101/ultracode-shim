@@ -16,8 +16,10 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Compile (no third-party deps)
-        run: python -m compileall proxy.py test_proxy.py providers scripts
+        run: python -m compileall proxy.py test_proxy.py providers scripts examples
       - name: Offline self-test
         run: python test_proxy.py
+      - name: Auto Router demo (offline routing proof)
+        run: python examples/auto_router_demo.py
       - name: Doctor (config validation, skip nested test)
         run: python scripts/doctor.py --no-test --ci
