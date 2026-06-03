@@ -146,6 +146,46 @@ DIRECTIVES_LOG = os.environ.get("UC_DIRECTIVES_LOG", "0") == "1"
 DIRECTIVES = {"planner": None, "strip": True}   # filled from config in main()
 _ROUTE_ALIASES = {}                              # normalized token -> concrete route id
 
+# 1M context window: Claude Code sizes its context meter (and auto-compaction) to
+# 1M only when the model id it holds carries a "[1m]" suffix. For a real-Claude
+# passthrough route whose upstream model is 1M-capable, we ADVERTISE the picker id
+# with that suffix on /v1/models + /healthz, so even an in-session /model switch
+# (not just a launch-time pick) gets the 1M window. The suffix is a client-side
+# convention, not an Anthropic model id: it is stripped before routing and
+# normalized off the sticky orchestrator/worker selection, so internal ids stay
+# clean. Disable with UC_ADVERTISE_1M=0. See docs/DIRECTIVES.md / PR #8 + #10.
+_ONEM_SUFFIX = "[1m]"
+ADVERTISE_1M = os.environ.get("UC_ADVERTISE_1M", "1") != "0"
+_CONTEXT_1M_UPSTREAM = set(t.strip() for t in os.environ.get(
+    "UC_1M_UPSTREAM",
+    "claude-opus-4-8,claude-opus-4-7,claude-opus-4-6,claude-sonnet-4-6").split(",") if t.strip())
+
+
+def _strip_1m(mid):
+    """Model id without a trailing [1m] window suffix (the client convention)."""
+    if isinstance(mid, str) and mid.endswith(_ONEM_SUFFIX):
+        return mid[:-len(_ONEM_SUFFIX)]
+    return mid
+
+
+def _advertise_id(model_entry):
+    """The id to advertise for a configured model on /v1/models + /healthz. Appends
+    [1m] when ADVERTISE_1M is on and the model is a real-Claude PASSTHROUGH route to
+    a 1M-capable upstream model, so Claude Code renders the 1M window for it (incl.
+    in-session /model picks). Worker entries and non-passthrough routes are returned
+    unchanged. Never raises."""
+    mid = model_entry.get("id") if isinstance(model_entry, dict) else None
+    if not (ADVERTISE_1M and isinstance(mid, str)):
+        return mid
+    if mid.endswith(_ONEM_SUFFIX) or mid.startswith(WORKER_ID_PREFIX):
+        return mid
+    slot = UC_SLOT_MAP.get(mid)
+    if not isinstance(slot, dict) or slot.get("type") not in (None, "anthropic"):
+        return mid                                  # passthrough (real Claude) only
+    if (slot.get("model") or mid) in _CONTEXT_1M_UPSTREAM:
+        return mid + _ONEM_SUFFIX
+    return mid
+
 try:
     UC_MODEL_MAP = json.loads(os.environ.get("UC_MODEL_MAP", "") or "{}")
     if not isinstance(UC_MODEL_MAP, dict):
@@ -566,6 +606,7 @@ def _set_selection(orch=None, worker=None):
     """Directly pre-set the sticky orchestrator/worker selection (used by the
     two-column pre-launch selector via POST /uc/select). Either may be None to
     leave that tier unchanged. Returns the resolved active selection dict."""
+    orch, worker = _strip_1m(orch), _strip_1m(worker)   # selections store clean ids
     with _SEL_LOCK:
         if orch is not None:
             _ACTIVE["orch"] = orch or None
@@ -584,6 +625,7 @@ def _select_target(mid, tier: str):
     fresh sessions behave exactly as before."""
     if not ORCH_WORKER:
         return mid
+    mid = _strip_1m(mid)   # a [1m]-suffixed pick maps to its clean route id
     with _SEL_LOCK:
         if mid in _WORKER_MAP:
             _ACTIVE["worker"] = _WORKER_MAP[mid]
@@ -893,14 +935,14 @@ def transform_messages_body(raw: bytes):
     route = {}
 
     # 1M context window: Claude Code appends a "[1m]" suffix to a model id to ask
-    # the client for the 1M window (it also sends the context-1m beta header; see
-    # the launchers' UC_FORCE_1M / [1m] handling). That suffix is a client-side
-    # convention, not an Anthropic model id, so it must not reach routing (it would
-    # not match a configured route or an orchestrator/worker pick) or the upstream.
-    # Strip it up front so "<id>[1m]" behaves exactly like "<id>" everywhere below;
-    # the 1M window is unaffected because it rides the beta header, left untouched.
-    if isinstance(model_before, str) and model_before.endswith("[1m]"):
-        model_before = model_before[:-len("[1m]")]
+    # the client for the 1M window (it also sends the context-1m beta header). That
+    # suffix is a client-side convention, not an Anthropic model id, so it must not
+    # reach routing (it wouldn't match a route) or the upstream. Strip it up front
+    # so "<id>[1m]" behaves exactly like "<id>" everywhere below; the 1M window is
+    # unaffected because it comes from the beta header, which we leave untouched.
+    stripped = _strip_1m(model_before)
+    if stripped != model_before:
+        model_before = stripped
         body["model"] = model_before
         changed = True
 
@@ -1918,7 +1960,7 @@ class Handler(BaseHTTPRequestHandler):
                     "candidates": [{"id": c["id"], "cost": c.get("cost")}
                                    for c in _router_available_candidates()],
                 },
-                "custom_models": [{"id": m["id"], "display_name": m["display_name"]}
+                "custom_models": [{"id": _advertise_id(m), "display_name": m["display_name"]}
                                   for m in UC_MODELS],
                 "stock_models": [{"id": m["id"], "display_name": m["display_name"]}
                                  for m in _stock_models()],
@@ -2036,9 +2078,10 @@ class Handler(BaseHTTPRequestHandler):
             existing.add(m["id"])
             stock_families.add(fam)
         for m in UC_MODELS:
-            if m["id"] not in existing:
-                data.append(dict(m))
-                existing.add(m["id"])
+            adv = _advertise_id(m)
+            if adv not in existing:
+                data.append({**m, "id": adv})
+                existing.add(adv)
         self._raw(200, "application/json", json.dumps(base).encode("utf-8"))
         return True
 
