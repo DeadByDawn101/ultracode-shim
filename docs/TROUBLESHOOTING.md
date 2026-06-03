@@ -102,6 +102,25 @@ tools). Set `"type": "openai_compat"` for that route — the proxy then translat
 Anthropic `tool_use`/`tool_result` ⇄ OpenAI `tool_calls` both ways. Real Claude
 (passthrough) already handles tools natively.
 
+### OpenCode Go (Zen) returns 401 "Model … not supported" or 403 "error code: 1010"
+
+OpenCode's **Go** subscription is an **OpenAI-compatible** API — not Anthropic — and
+three config details trip people up:
+
+- **Use `"type": "openai_compat"`**, with `upstream` ending in `/zen/go/v1` (the proxy
+  appends `/chat/completions`). An Anthropic passthrough to `…/zen/go` won't work.
+- **Model ids are bare** — `deepseek-v4-pro`, not `opencode-go/deepseek-v4-pro` (the
+  `opencode-go/` prefix is the `opencode` CLI's namespace, not the API id). A wrong id
+  returns `401 {"type":"ModelError","message":"Model … is not supported"}`.
+- **Set a `User-Agent` header.** The endpoint is behind Cloudflare, which blocks the
+  default client User-Agent with `403 error code: 1010`.
+
+Two more gotchas: `https://opencode.ai/zen/v1` (no `/go`) is the separate
+**pay-as-you-go** endpoint, not the subscription — an empty balance there shows as
+`401 {"type":"CreditsError","message":"Insufficient balance"}`. And DeepSeek V4 are
+reasoning models; the proxy already keeps their `reasoning_content` out of the visible
+answer.
+
 ### Rejecting a tool call errors with "insufficient tool messages following tool_calls message"
 
 Symptom (seen on strict backends like DeepSeek via OpenCode Zen):

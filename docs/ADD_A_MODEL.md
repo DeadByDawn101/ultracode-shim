@@ -118,18 +118,43 @@ gotcha worth calling out:
 
 The shipped `config.example.json` already includes this entry — just add your key.
 
-### Anthropic passthrough — real Claude or an Anthropic-compatible endpoint
-
-Omit `type` (or set `"anthropic"`). With no `auth`/`upstream` it's just real
-Claude with the UltraCode envelope. You can also point at an Anthropic-shaped
-gateway and add headers:
+### `openai_compat` — OpenCode Go (OpenCode Zen subscription)
 
 ```json
 "claude-opencode": {
-  "upstream": "https://opencode.ai/zen/go",
-  "model": "claude-sonnet-4-5",
+  "type": "openai_compat",
+  "upstream": "https://opencode.ai/zen/go/v1",
+  "model": "deepseek-v4-pro",
   "auth": "Bearer ${OPENCODE_API_KEY}",
   "headers": { "User-Agent": "openclaw/2026.4.20" }
+}
+```
+
+- It's an **OpenAI-compatible** API, *not* Anthropic. The base URL ends in
+  `/zen/go/v1`; the proxy appends `/chat/completions`.
+- **Model ids are bare** — `deepseek-v4-pro`, `deepseek-v4-flash`, `kimi-k2.6`,
+  `glm-5.1`, `minimax-m3`, … — *not* the `opencode-go/`-prefixed ids the
+  `opencode` CLI prints (that prefix is the CLI's provider namespace, not the
+  API id). A wrong id returns `401 {"type":"ModelError","message":"Model … is not supported"}`.
+- A **`User-Agent` header is required**: the endpoint is behind Cloudflare, which
+  rejects the default client UA with `403 error code: 1010`.
+- `https://opencode.ai/zen/v1` (no `/go`) is the separate **pay-as-you-go**
+  endpoint; `…/zen/go/v1` is the **subscription**. An empty PAYG balance shows as
+  `401 {"type":"CreditsError","message":"Insufficient balance"}`.
+- DeepSeek V4 models are reasoning models — their chain-of-thought returns as
+  `reasoning_content`, which the proxy keeps out of the visible answer.
+
+### Anthropic passthrough — real Claude or an Anthropic-compatible endpoint
+
+Omit `type` (or set `"anthropic"`). With no `auth`/`upstream` it's just real
+Claude with the UltraCode envelope. You can also point at another
+Anthropic-shaped gateway and add headers:
+
+```json
+"claude-gateway": {
+  "upstream": "https://your-anthropic-gateway.example.com",
+  "model": "claude-sonnet-4-5",
+  "auth": "Bearer ${GATEWAY_API_KEY}"
 }
 ```
 
@@ -175,7 +200,7 @@ plan/key for and delete the rest:
 | DeepSeek V4 Pro/Flash | `claude-deepseek-v4-*` | `openai_compat` | DeepSeek |
 | Step Flash | `claude-step-flash` | `openai_compat` | StepFun |
 | Ollama Cloud | `claude-ollama-cloud` | `openai_compat` | Ollama Cloud |
-| Claude via OpenCode Go | `claude-opencode` | passthrough | OpenCode Go |
+| DeepSeek V4 Pro (OpenCode Go) | `claude-opencode` | `openai_compat` | OpenCode Zen (Go subscription) |
 | Llama 3.3 70B (OpenRouter) | `claude-openrouter` | `openai_compat` | OpenRouter |
 | Local model | `claude-local` | `openai_compat` | local server |
 | Composer 2.5 (experimental) | `claude-composer` | `cursor_agent` | cursor-agent |
