@@ -10,6 +10,12 @@ display on HiDPI screens.
 | `architecture.png` | "How it works" flow diagram | 1280×600 |
 | `quickstart.png` | Three-step quick start strip | 1280×330 |
 | `auto-router.png` | Auto Router "how it routes" diagram | 1280×650 |
+| `doc-setup.png` | `docs/SETUP.md` header | 1280×210 |
+| `doc-how.png` | `docs/HOW_IT_WORKS.md` header | 1280×210 |
+| `doc-add.png` | `docs/ADD_A_MODEL.md` header | 1280×210 |
+| `doc-trouble.png` | `docs/TROUBLESHOOTING.md` header | 1280×210 |
+
+The animated demo lives at [`../demo/demo.gif`](../demo/demo.gif).
 
 Palette: indigo `#6366f1` → violet `#8b5cf6` → purple `#a855f7` → fuchsia
 `#c026d3` on a near-black `#0a0c14` background, matching the `ultracode` app icon.

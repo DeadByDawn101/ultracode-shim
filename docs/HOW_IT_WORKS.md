@@ -1,4 +1,6 @@
-# How it works
+<p align="center">
+  <img src="../assets/brand/doc-how.png" alt="How it works — the loopback proxy, the UltraCode envelope, and the evidence" width="100%">
+</p>
 
 UltraCode-Shim is a tiny loopback proxy plus a launcher. There is no magic and
 no secret model. This page explains the mechanism and the reverse-engineering it

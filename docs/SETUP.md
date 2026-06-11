@@ -1,4 +1,6 @@
-# Setup
+<p align="center">
+  <img src="../assets/brand/doc-setup.png" alt="Setup — get running on Windows 11 or macOS / Linux / WSL" width="100%">
+</p>
 
 Works on **Windows 11** (no WSL required) and on **macOS / Linux / WSL**.
 

@@ -158,8 +158,11 @@ and paste [the prompt](examples/demo/PROMPT.md): it fixes the bug, adds an
 animated color renderer + starting patterns, and runs its own self-test, ending
 on a glider crawling across the screen.
 
-<!-- Recording goes here. Drop a clip at assets/demo/demo.gif and uncomment: -->
-<!-- ![UltraCode-Shim demo](assets/demo/demo.gif) -->
+<p align="center">
+  <img src="assets/demo/demo.gif" alt="A colored Conway's Game of Life glider crawling across the terminal — the demo's end state" width="70%">
+</p>
+
+<p align="center"><sub>The demo's payoff: an animated, colored glider crawling across the terminal. Record your own run over this — see <a href="assets/demo/README.md">assets/demo/README.md</a>.</sub></p>
 
 Verified live against real backends: **GPT‑5.5** (Codex login) and **Cursor
 Composer**, plus an offline self-test that runs in CI on Linux/Windows ×
