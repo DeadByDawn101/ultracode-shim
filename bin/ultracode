@@ -61,7 +61,7 @@ BASE_URL="http://127.0.0.1:${PORT}"
 # append [1m] to 1M-capable Claude base ids before launch. Disable with
 # UC_FORCE_1M=0; override the capable set with UC_1M_MODELS (comma-separated).
 UC_FORCE_1M="${UC_FORCE_1M:-1}"
-UC_1M_MODELS="${UC_1M_MODELS:-claude-opus-4-8,claude-opus-4-7,claude-opus-4-6,claude-sonnet-4-6}"
+UC_1M_MODELS="${UC_1M_MODELS:-claude-opus-4-8,claude-opus-4-7,claude-opus-4-6,claude-sonnet-4-6,claude-opus}"
 uc_add_1m() {
   # Echo $1 with a [1m] suffix iff it is a bare, 1M-capable Claude id. Anything
   # else (Auto Router, Gemini/GPT/Composer, Haiku, already-suffixed, empty) is

@@ -98,7 +98,7 @@ function Add-Uc1m {
     if ([string]::IsNullOrEmpty($ModelId)) { return $ModelId }
     if ($ModelId.Contains("[1m]")) { return $ModelId }
     $set = if ($env:UC_1M_MODELS) { $env:UC_1M_MODELS }
-           else { "claude-opus-4-8,claude-opus-4-7,claude-opus-4-6,claude-sonnet-4-6" }
+           else { "claude-opus-4-8,claude-opus-4-7,claude-opus-4-6,claude-sonnet-4-6,claude-opus" }
     foreach ($id in $set.Split(",")) {
         if ($ModelId -eq $id.Trim()) { return "${ModelId}[1m]" }
     }

@@ -296,15 +296,24 @@ the 200k window even though Opus 4.8 / Opus 4.7 / Opus 4.6 / Sonnet 4.6 serve 1M
 natively on the Anthropic API. Nothing is actually lost upstream — the window is
 just mis-sized in the client.
 
-**Fix.** The launcher now appends `[1m]` automatically when the chosen
-orchestrator is a 1M-capable Claude model. Relaunch, pick the model, and confirm
+**Fix.** Two parts work together. (1) The **launcher** appends `[1m]` to a
+1M-capable Claude model chosen at launch. (2) The **proxy** also *advertises* the
+`[1m]` suffix on `/v1/models` + `/healthz` for any **configured real-Claude
+passthrough route** whose upstream model is 1M-capable (e.g. a `claude-opus` route
+mapping to `claude-opus-4-8`) — so even an **in-session `/model` switch** (not just
+the launch-time pick) gets the 1M window. The proxy strips the `[1m]` again before
+routing, so it never reaches the backend. Relaunch, pick the model, and confirm
 `/context` reads `/ 1M`.
 
-- **Disable it** (back to bare ids): set `UC_FORCE_1M=0`.
-- **Change the capable set:** set `UC_1M_MODELS` to a comma-separated list of base
-  ids (default `claude-opus-4-8,claude-opus-4-7,claude-opus-4-6,claude-sonnet-4-6`).
-- **Not affected:** Haiku 4.5 (200k only), `claude-auto`, and non-Claude routes
-  (Gemini / GPT / Composer) are never given a `[1m]` suffix.
+- **Disable launcher suffixing** (back to bare ids): set `UC_FORCE_1M=0`.
+- **Change the launcher's capable set:** set `UC_1M_MODELS` to a comma-separated
+  list of base ids (default `claude-opus-4-8,claude-opus-4-7,claude-opus-4-6,claude-sonnet-4-6,claude-opus`).
+- **Disable proxy advertising:** set `UC_ADVERTISE_1M=0`. Change which upstream
+  models count as 1M with `UC_1M_UPSTREAM` (comma-separated upstream model ids;
+  default the Opus 4.6–4.8 + Sonnet 4.6 family).
+- **Not affected:** Haiku 4.5 (200k only), `claude-auto`, worker (`Worker → …`)
+  entries, and non-Claude routes (Gemini / GPT / Composer) never get a `[1m]`
+  suffix.
 - **Caveat:** if your Anthropic-passthrough hop can fall back to a backend that
   only supports 200k, a conversation that grows past 200k may then fail there —
   make sure that fallback also honors 1M.

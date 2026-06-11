@@ -263,21 +263,6 @@ def main():
         assert up._expand_env("Bearer ${MOCK_KEY}") == "Bearer secret123"
         print("[ok] ${ENV} expansion in route auth")
 
-        # PR #8 companion: Claude Code's [1m] context-window suffix on the model id
-        # is stripped before routing, so "<id>[1m]" still matches "<id>"'s route
-        # (the 1M window itself rides the context-1m beta header, not the id). A
-        # naive exact-match lookup would otherwise miss the route once the launcher
-        # appends [1m] to a 1M-capable Claude pick.
-        _saved_slots = up.UC_SLOT_MAP
-        up.UC_SLOT_MAP = {"claude-big": {"type": "openai_compat", "model": "big-real",
-                                         "upstream": mock + "/v1", "auth": "Bearer ${MOCK_KEY}"}}
-        out_1m, _ = up.transform_messages_body(json.dumps({
-            "model": "claude-big[1m]", "max_tokens": 8,
-            "messages": [{"role": "user", "content": "hi"}]}).encode())
-        assert json.loads(out_1m)["model"] == "big-real", json.loads(out_1m)["model"]
-        up.UC_SLOT_MAP = _saved_slots
-        print("[ok] 1M [1m] window suffix stripped before routing")
-
         # Stock Claude models: the built-in fallback so real Claude stays in
         # /model even with no upstream list. Toggle + override are honored, and
         # every advertised id obeys Claude Code's /^(claude|anthropic)/i rule.
@@ -457,6 +442,26 @@ def main():
         # plan-mode detection drives the optional planner auto-route
         assert up._is_plan_mode({"tools": [{"name": "ExitPlanMode"}]}) is True
         assert up._is_plan_mode({"tools": [{"name": "Bash"}]}) is False
+        # 1M context-window suffix: "<id>[1m]" is stripped before routing, so it
+        # resolves to "<id>"'s route (the 1M window itself rides the beta header).
+        out1m, _ = up.transform_messages_body(json.dumps({
+            "model": "claude-composer[1m]", "max_tokens": 16,
+            "messages": [{"role": "user", "content": "hi"}]}).encode())
+        assert json.loads(out1m)["model"] == "cursor/composer-2.5", json.loads(out1m)["model"]
+        # advertise [1m] on a real-Claude PASSTHROUGH route to a 1M model, so the
+        # /model picker id carries it and Claude Code renders 1M even on in-session
+        # switches; worker + non-passthrough entries are left untouched
+        assert up._advertise_id({"id": "claude-opus"}) == "claude-opus[1m]"
+        assert up._advertise_id({"id": "claude-composer"}) == "claude-composer"   # openai_compat
+        assert up._advertise_id({"id": "claude-worker-opus"}) == "claude-worker-opus"
+        assert up._strip_1m("claude-opus[1m]") == "claude-opus"
+        # a [1m]-suffixed pick still routes to its clean route (selection normalized)
+        up._ACTIVE.update({"orch": None, "worker": None, "worker_explicit": False})
+        out_adv, _ = up.transform_messages_body(json.dumps({
+            "model": "claude-opus[1m]", "max_tokens": 16,
+            "messages": [{"role": "user", "content": "hi"}]}).encode())
+        assert json.loads(out_adv)["model"] == "claude-opus-4-8", json.loads(out_adv)["model"]
+        up._ACTIVE.update({"orch": None, "worker": None, "worker_explicit": False})
         # a name that maps to TWO routes (gpt-5.5 head AND a gpt-oss model head) is
         # dropped as ambiguous -> resolves to nothing (regression for the docs/gpt gap)
         _slots0, _models0 = up.UC_SLOT_MAP, up.UC_MODELS
@@ -485,7 +490,7 @@ def main():
         assert _pin("@composer do it")[0] is None
         up.UC_SLOT_MAP, up.UC_MODELS, up._ROUTE_ALIASES, up.DIRECTIVES = (
             _saved[0], _saved[1], _saved[2], _saved[3])
-        print("[ok] routing directives: opt-in default-off / NL opt-in / surgical strip / planner-gated / gpt-collision / dispatch")
+        print("[ok] routing directives: opt-in default-off / NL opt-in / surgical strip / planner-gated / gpt-collision / dispatch / [1m] strip + advertise")
 
         # issue #3: a rejected tool call (with or without a comment) must not leave
         # an assistant tool_calls message unanswered, and tool replies must come
